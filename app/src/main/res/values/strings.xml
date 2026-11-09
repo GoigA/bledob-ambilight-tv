@@ -1,3 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">LotusAmbilightTV</string>
+    <!-- Application Information -->
+    <string name="app_name">Lotus Ambilight TV</string>
+    <string name="header_app_title">Lotus Ambilight TV</string>
+    <string name="dashboard_header_title">Lotus Ambilight TV</string>
+
+    <!-- Header Telemetry & Device Status -->
+    <string name="header_device_status_connected">Dispositivo: %1$s (%2$s) • %3$s</string>
+    <string name="header_device_status_unconfigured">Dispositivo: %1$s • %2$s</string>
+    <string name="header_telemetry_format">Status: %1$s • %2$d FPS • Sinal: %3$s</string>
+    <string name="dashboard_telemetry_format">Status: %1$s | %2$d FPS | Hex: %3$s</string>
+    <string name="telemetry_idle_signal">Aguardando sinal</string>
+
+    <!-- Section 1: Background Service & Screen Capture -->
+    <string name="section_service_title">1. Sincronização em Segundo Plano</string>
+    <string name="card_service_title">1. Controle do Serviço em Segundo Plano</string>
+    <string name="btn_service_start">Iniciar Ambilight</string>
+    <string name="action_start_capture">Iniciar Ambilight</string>
+    <string name="btn_service_restart">Reiniciar Sincronização</string>
+    <string name="action_restart_capture">Reiniciar Sincronização</string>
+    <string name="btn_service_minimize">Assistir TV (Manter LEDs)</string>
+    <string name="action_minimize_background">Assistir TV (Manter LEDs)</string>
+    <string name="btn_service_stop">Parar Ambilight e Desligar LEDs</string>
+    <string name="action_stop_service">Parar Ambilight e Desligar LEDs</string>
+
+    <!-- Section 2: Bluetooth & Device Configuration -->
+    <string name="section_ble_config_title">2. Conexão da Fita LED (Bluetooth)</string>
+    <string name="card_ble_title">2. Conectar Fita Bluetooth</string>
+    <string name="label_mac_input">Endereço MAC da Fita (ex: AA:BB:CC:DD:EE:FF)</string>
+    <string name="btn_save_mac_and_connect">Salvar MAC e Conectar</string>
+    <string name="action_save_mac">Salvar MAC e Conectar</string>
+    <string name="btn_scan_ble">Buscar Fita Automaticamente</string>
+    <string name="action_scan_ble">Buscar Fita Automaticamente</string>
+    <string name="btn_reconnect_ble">Reconectar Bluetooth</string>
+    <string name="action_reconnect_ble">Reconectar Bluetooth</string>
+    <string name="btn_power_on">Ligar Fita</string>
+    <string name="action_power_on">Ligar Fita</string>
+    <string name="btn_power_off">Desligar Fita</string>
+    <string name="action_power_off">Desligar Fita</string>
+
+    <!-- Quick Color Hardware Tests -->
+    <string name="btn_color_red">Vermelho</string>
+    <string name="btn_color_green">Verde</string>
+    <string name="btn_color_blue">Azul</string>
+    <string name="btn_color_amber">Âmbar Cinema</string>
+
+    <!-- Section 3: Color Profiles, Calibration & Automation -->
+    <string name="section_calibration_title">3. Calibração de Cores e Automação</string>
+    <string name="card_calibration_title">3. Calibração de Cores e Automação</string>
+    <string name="label_profile">Perfil:</string>
+    <string name="label_brightness_format">Brilho (%1$d%%):</string>
+    <string name="btn_brightness_decrease">-10%</string>
+    <string name="btn_brightness_increase">+10%</string>
+    <string name="btn_brightness_max">100% Máx.</string>
+    <string name="label_channel_order">Ordem RGB:</string>
+    <string name="label_protocol_variant">Protocolo:</string>
+    <string name="label_protocol">Protocolo:</string>
+
+    <!-- Automation Toggles & Statuses -->
+    <string name="btn_standby_sync_format">Sincronizar Standby da TV: %1$s</string>
+    <string name="toggle_standby_sync_format">Sincronizar Standby da TV: %1$s</string>
+    <string name="btn_drm_fallback_format">Luz Ambiente em Apps Protegidos (DRM): %1$s</string>
+    <string name="toggle_drm_fallback_format">Luz Ambiente em Apps Protegidos (DRM): %1$s</string>
+    <string name="status_enabled">Ativado</string>
+    <string name="status_disabled">Desativado</string>
+    <string name="state_enabled">Ativado</string>
+    <string name="state_disabled">Desativado</string>
+
+    <!-- Domain Enum Translations (UI Presentation Layer) -->
+    <string name="ble_status_disconnected">Desconectado</string>
+    <string name="ble_status_scanning">Buscando fitas LED próximas…</string>
+    <string name="ble_status_connecting">Conectando à fita…</string>
+    <string name="ble_status_connected">Conectado</string>
+    <string name="ble_status_error">Falha no Bluetooth. Reconectando…</string>
+
+    <string name="ambilight_mode_stopped">Inativo</string>
+    <string name="ambilight_mode_screen_sync">Sincronizando com a Tela</string>
+    <string name="ambilight_mode_drm_audio">Luz Ambiente (Áudio/DRM)</string>
+    <string name="ambilight_mode_tv_standby">TV em Modo de Espera (LEDs Desligados)</string>
+
+    <string name="device_fallback_name">Nenhuma fita conectada</string>
+
+    <!-- Color Profiles -->
+    <string name="profile_cinema">Cinema (Suave)</string>
+    <string name="profile_dynamic">Dinâmico (Padrão)</string>
+    <string name="profile_gaming">Jogos (Resposta Rápida)</string>
+
+    <!-- Channel Orders -->
+    <string name="channel_order_rgb">RGB (Padrão)</string>
+    <string name="channel_order_grb">GRB</string>
+    <string name="channel_order_brg">BRG</string>
+    <string name="channel_order_rbg">RBG</string>
+    <string name="channel_order_gbr">GBR</string>
+    <string name="channel_order_bgr">BGR</string>
+
+    <!-- Protocol Variants -->
+    <string name="variant_bledob_07">BLEDOB (0x07)</string>
+    <string name="variant_bledom_04">ELK-BLEDOM (0x04)</string>
+    <string name="variant_dual_hybrid">Híbrido (0x07 + 0x04)</string>
+
+    <!-- Accessibility Content Descriptions (TalkBack / 10-foot UI) -->
+    <string name="cd_live_color_halo">Pré-visualização da cor emitida pelos LEDs em tempo real</string>
+    <string name="cd_mac_input_field">Campo de texto para endereço MAC do dispositivo Bluetooth</string>
+    <string name="cd_brightness_decrease">Diminuir brilho da fita em 10 por cento</string>
+    <string name="cd_brightness_increase">Aumentar brilho da fita em 10 por cento</string>
+    <string name="cd_brightness_max">Definir brilho da fita para o nível máximo de 100 por cento</string>
 </resources>

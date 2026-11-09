@@ -1,76 +1,163 @@
-# bledob-ambilight-tv
+<p align="center">
+  <img src="docs/assets/logo-app.png" alt="Lotus Ambilight TV" width="180">
+</p>
 
-Aplicativo para Android TV 14 que sincroniza fitas LED Bluetooth baratas (controladoras `BLEDOB`, `ELK-BLEDOM`, `MELK` e `LEDBLE`, que usam o app LotusLantern) com a imagem da TV em tempo real.
+# Lotus Ambilight TV
 
-Comprei uma fita LED RGB dessas que usam o aplicativo LotusLantern e queria rodar um efeito parecido com o Ambilight direto na minha Smart TV Philips 4K com Android TV 14, sem precisar de placa de captura HDMI, Raspberry Pi ou câmera apontada para a tela. Como a própria TV tem Bluetooth Low Energy (BLE), este app roda um serviço em segundo plano (`MediaProjection` + GATT client), lê os quadros da tela em resolução reduzida (`64x36`) e manda a cor predominante das bordas direto para a fita.
+<p align="center">
+  <img src="docs/assets/01-hero-banner.png" alt="Demonstração do Lotus Ambilight TV em Smart TV 85 polegadas" width="100%">
+</p>
 
-## Como funciona
+Aplicativo para Android TV (compatível com Android TV 9 a 14+) que sincroniza fitas de LED Bluetooth econômicas (controladoras `BLEDOB`, `ELK-BLEDOM`, `MELK` e `LEDBLE`, que utilizam o app LotusLantern) com a imagem exibida na tela em tempo real.
 
-A captura de tela roda num `VirtualDisplay` de `64x36` pixels em `RGBA_8888`. Nessa resolução, varrer o buffer inteiro leva menos de `0.2 ms` na CPU da TV e não causa engasgos na reprodução de vídeos em 4K.
+O projeto dispensa placas de captura HDMI externas (como Raspberry Pi ou sync boxes caras) e câmeras apontadas para o painel. O próprio processador da TV lê os quadros da tela via `MediaProjection` em resolução reduzida (`64x36`), extrai as cores predominantes das bordas e transmite comandos via Bluetooth Low Energy (BLE) com taxa de 20 a 30 FPS.
 
-O cálculo de cor (`VividEdgeColorEngine`) descarta faixas pretas horizontais de filmes (letterbox), dá peso maior aos pixels próximos das bordas da imagem e aplica um ganho de saturação em HSV antes de suavizar a transição com média móvel exponencial (EMA). Isso evita que cenas com muitas cores misturadas deixem a fita sempre branca ou cinza.
+<p align="center">
+  <img src="docs/assets/ambilight-demo.gif" alt="Demonstração em tempo real com corte de letterbox e transição suave EMA" width="100%">
+</p>
 
-Para o envio Bluetooth, o app conecta na característica `0000fff3-0000-1000-8000-00805f9b34fb` (serviço `0000fff0-0000-1000-8000-00805f9b34fb`) usando `WRITE_TYPE_NO_RESPONSE` e `CONNECTION_PRIORITY_HIGH`. Cada atualização de cor é um pacote de 9 bytes:
+---
+
+## Arquitetura de processamento
+
+O fluxo de dados foi projetado para manter consumo mínimo de CPU e memória na Smart TV, sem causar engasgos na reprodução de vídeos em 4K HDR:
+
+<p align="center">
+  <img src="docs/assets/02-architecture-pipeline.png" alt="Pipeline de processamento em 4 etapas" width="100%">
+</p>
+
+1. **Captura em baixa resolução**: um `VirtualDisplay` de `64x36` pixels em formato `RGBA_8888` recebe os quadros da tela. A varredura de buffer completa leva menos de 0.2 ms por quadro no processador da TV.
+2. **Motor de cor VividEdge**: o algoritmo descarta faixas pretas de filmes widescreen, calcula a cor nas bordas da tela e ajusta o ganho de saturação em HSV.
+3. **Pacote GATT**: os valores calculados são convertidos para o protocolo binário de 9 bytes esperado pela controladora Bluetooth.
+4. **Fita LED**: os pacotes são enviados via BLE sem confirmação (`WRITE_TYPE_NO_RESPONSE`), mantendo a latência baixa e o movimento suave.
+
+---
+
+## Cálculo de cor com VividEdge Engine
+
+Mídias diferentes apresentam características visuais variadas: filmes em proporção 21:9 contêm faixas pretas horizontais, enquanto cenas ricas em detalhes podem diluir a média simples de pixels em tons acinzentados ou esbranquiçados.
+
+<p align="center">
+  <img src="docs/assets/03-vivid-edge-comparison.png" alt="Comparativo entre média simples de pixels e o algoritmo VividEdge Engine" width="100%">
+</p>
+
+O `VividEdgeColorEngine` resolve essas situações com três técnicas combinadas:
+
+- **Detecção de letterbox**: linhas superiores e inferiores com luminância abaixo do limiar de corte são ignoradas no cálculo.
+- **Ponderação perimétrica**: pixels das extremidades da tela recebem peso maior do que os do centro, refletindo a iluminação que realmente toca a parede ao redor da TV.
+- **Saturação e transição suave**: um fator de saturação no espaço de cor HSV reforça os tons vibrantes, enquanto uma média móvel exponencial (EMA) filtra mudanças bruscas, evitando oscilações incômodas durante cortes rápidos de câmera.
+
+---
+
+## DRM e sincronização de energia
+
+<p align="center">
+  <img src="docs/assets/04-drm-audio-and-standby.png" alt="Comportamento com DRM e sincronização com o modo de espera da TV" width="100%">
+</p>
+
+### Proteção de conteúdo (DRM)
+Aplicativos de streaming que usam Widevine L1 (como Netflix, Prime Video e Disney+) ativam a proteção `FLAG_SECURE` na camada de vídeo. Nessas aplicações, o sistema operacional Android substitui o quadro capturado por uma imagem preta por questões de segurança de hardware.
+
+Em conteúdos livres de DRM (YouTube, SmartTube, Plex, Jellyfin, Kodi, Stremio, Twitch, IPTV e jogos locais), a captura de tela funciona continuamente. Ao detectar uma sequência prolongada de quadros pretos decorrentes de DRM, o aplicativo pode comutar para o modo de visualização de áudio (analisando o sinal da sessão global da TV) ou manter uma luz ambiente estável de baixa intensidade.
+
+### Desligamento automático em espera
+O serviço monitora os eventos de sistema `ACTION_SCREEN_OFF` e `ACTION_SCREEN_ON`. Quando a TV entra em modo de espera pelo controle remoto, o aplicativo envia imediatamente o comando de desligamento para a fita de LED. Ao ligar a tela novamente, a fita acende e retoma o Ambilight de forma transparente.
+
+---
+
+## Protocolo Bluetooth Low Energy
+
+O aplicativo comunica-se com a fita pelo serviço GATT `0000fff0-0000-1000-8000-00805f9b34fb` e pela característica de escrita `0000fff3-0000-1000-8000-00805f9b34fb`.
+
+Os comandos utilizam quadros de 9 bytes iniciados por `0x7E` e finalizados por `0xEF`:
 
 | Comando | Pacote Hex (`BLEDOB 0x07`) | Pacote Hex (`ELK-BLEDOM 0x04`) |
 | :--- | :--- | :--- |
 | Ligar (Power ON) | `7E 07 04 FF 00 01 02 01 EF` | `7E 04 04 F0 00 01 FF 00 EF` |
 | Desligar (Power OFF) | `7E 07 04 00 00 00 02 01 EF` | `7E 04 04 00 00 00 FF 00 EF` |
-| Cor RGB | `7E 07 05 03 [R] [G] [B] 10 EF` | `7E 04 05 03 [R] [G] [B] 00 EF` |
-| Brilho (0 a 100%) | `7E 07 01 [00..64] FF FF FF 00 EF` | `7E 04 01 [00..64] FF FF FF 00 EF` |
+| Atualização RGB | `7E 07 05 03 [R] [G] [B] 10 EF` | `7E 04 05 03 [R] [G] [B] 00 EF` |
+| Ajuste de brilho (0 a 100%) | `7E 07 01 [00..64] FF FF FF 00 EF` | `7E 04 01 [00..64] FF FF FF 00 EF` |
 
-Quando a TV entra em standby pelo controle remoto (`ACTION_SCREEN_OFF`), o serviço envia o pacote de desligamento para a fita não ficar acesa à noite e religa tudo quando a tela volta (`ACTION_SCREEN_ON`).
+---
 
-## Limitação de DRM (Netflix, Prime Video, Disney+)
+## Interface e controle remoto na Android TV
 
-No Android, aplicativos de streaming que usam Widevine L1 marcam a superfície de vídeo com `FLAG_SECURE`. Nesses aplicativos, a API `MediaProjection` recebe quadros pretos por bloqueio do próprio sistema operacional.
+A interface do aplicativo foi desenvolvida para navegação fluida por controle remoto com teclas direcionais (D-Pad), respeitando o padrão visual de televisores de tela grande:
 
-Já no YouTube, SmartTube, Stremio, Kodi, Plex, Jellyfin, canais de IPTV, Twitch e jogos, a captura de cores funciona normalmente. Quando o app detecta vários quadros pretos seguidos por causa de DRM, ele pode alternar automaticamente para o modo de áudio (`Visualizer` na sessão global da TV) ou manter uma luz âmbar de fundo até você voltar para um conteúdo sem DRM.
+<p align="center">
+  <img src="docs/assets/05-tv-dashboard-concept.png" alt="Conceito da interface para Android TV" width="100%">
+</p>
 
-## Como instalar na Android TV
+<p align="center">
+  <img src="docs/assets/06-real-tv-screenshot.png" alt="Captura de tela real da aplicação em execução na TV" width="100%">
+</p>
 
-Você pode baixar o `.apk` na aba [Releases](../../releases) e instalar na TV (via ADB, LocalSend ou Send Files to TV).
+Recursos disponíveis na tela de configurações:
+- **Busca automática**: localiza controladoras BLE próximas que anunciem os nomes padrão (`BLEDOB`, `BLEDOM`, `MELK`, `LEDBLE`).
+- **Endereço MAC manual**: permite digitar diretamente o identificador da fita (por exemplo, `AA:BB:CC:DD:EE:FF`) caso o dispositivo oculte o nome nos pacotes de anúncio.
+- **Calibração de canais de cor**: botões dedicados de teste rápido (Vermelho, Verde, Azul) para diagnosticar fitas físicas que utilizem ordem invertida de fiação (`RGB`, `GRB` ou `BRG`).
+- **Controle de execução**: início, pausa e minimização do serviço de segundo plano.
 
-Ao abrir o app na TV:
-1. Clique em `Buscar Fita Automaticamente (Scan BLE)` para localizar qualquer fita `BLEDOB`, `BLEDOM`, `MELK` ou `LEDBLE` ligada por perto, ou digite o endereço MAC da sua fita (ex.: `BE:27:08:00:49:E2`) e clique em `Salvar MAC e Conectar`.
-2. Use os botões `Vermelho`, `Verde` e `Azul` para conferir se as cores batem com a fita física. Se a sua fita tiver os fios invertidos, troque a opção `Ordem RGB` para `GRB` ou `BRG`.
-3. Clique em `Iniciar Ambilight em Background` e depois em `Minimizar`.
+---
 
-### Tirando o pop-up de permissão e o ícone de gravação no Android TV 14
+## Instalação na Android TV
 
-Por padrão, o Android 14 pede confirmação toda vez que um app inicia `MediaProjection` e mostra um ícone de transmissão no canto superior direito da TV. Se você tiver ADB por Wi-Fi ativado na TV, rode os comandos abaixo pelo PC (ou use o script `install_and_grant_tv.ps1`):
+1. Baixe o arquivo `.apk` mais recente na seção de [Releases](../../releases).
+2. Transfira o instalador para a TV usando um pendrive, ou aplicativos de envio local como LocalSend ou Send Files to TV.
+3. Abra o arquivo na TV e confirme a instalação.
+4. No primeiro acesso, selecione **Buscar Fita Automaticamente** ou insira o endereço MAC da sua controladora e confirme a conexão.
+5. Verifique a correspondência de cores pelos botões de teste e inicie a sincronização em segundo plano.
+
+### Ajustes recomendados no Android TV 14 via ADB
+
+No Android 14, o sistema operacional exibe uma caixa de confirmação sempre que uma captura de tela é requisitada e posiciona um ícone indicador de transmissão no canto superior da tela. Se você tiver acesso ADB ativado pela rede na sua TV, execute os comandos a seguir pelo computador para permitir execução direta e contínua:
 
 ```powershell
 adb connect IP_DA_SUA_TV:5555
 
-# Permite iniciar o Ambilight sem a janela de confirmacao do Android
+# Concede permissao permanente de captura e audio sem janelas de confirmacao
 adb shell appops set com.lotus.ambilighttv PROJECT_MEDIA allow
 adb shell appops set com.lotus.ambilighttv RECORD_AUDIO allow
 
-# Evita que o Android feche o servico em segundo plano
+# Impede que o sistema suspenda o servico em segundo plano por economia de energia
 adb shell cmd deviceidle whitelist +com.lotus.ambilighttv
 
-# Oculta o icone de captura de tela no canto superior direito da Android TV 14
+# Oculta o indicador de projecao de tela no Android TV 14
 adb shell cmd device_config set_sync_disabled_for_tests persistent
 adb shell cmd device_config put privacy media_projection_indicators_enabled false
 ```
 
-No Windows, você também pode rodar direto:
+Também é possível executar o script automatizado disponível na raiz do repositório:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install_and_grant_tv.ps1 -TvIpAddress "192.168.1.18"
 ```
 
-## Compilando do código-fonte
+---
 
-Requer JDK 21 e Android SDK (API 35 instalada).
+## Compilação do código-fonte
+
+Requisitos:
+- JDK 21
+- Android SDK instalado com Build-Tools 35.0.0 e plataforma API 35
+
+Para rodar os testes unitários:
 
 ```powershell
-.\gradlew.bat testDebugUnitTest assembleDebug
+.\gradlew.bat testDebugUnitTest
 ```
 
-O APK compilado fica em `app/build/outputs/apk/debug/app-debug.apk`.
+Para gerar o pacote de depuração (APK):
+
+```powershell
+.\gradlew.bat assembleDebug
+```
+
+O arquivo compilado é gerado no caminho:
+`app/build/outputs/apk/debug/app-debug.apk`
+
+---
 
 ## Licença
 
-Distribuído sob a licença MIT. Veja o arquivo [LICENSE](LICENSE).
+Distribuído sob a licença MIT. Consulte o arquivo [LICENSE](LICENSE) para mais informações.

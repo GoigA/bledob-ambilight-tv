@@ -30,6 +30,7 @@ import com.lotus.ambilighttv.engine.AudioFallbackEngine
 import com.lotus.ambilighttv.engine.VividEdgeColorEngine
 import com.lotus.ambilighttv.state.AmbilightMode
 import com.lotus.ambilighttv.state.AmbilightStateRepository
+import com.lotus.ambilighttv.state.AmbilightUiState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -276,17 +277,17 @@ class AmbilightForegroundService : Service() {
 
                     if (analysis.isDrmFallbackActive && currentState.drmFallbackEnabled) {
                         audioFallbackEngine.start()
-                        val fallbackRgb = audioFallbackEngine.nextAmbientColor()
-                        bleClient.sendColor(fallbackRgb[0], fallbackRgb[1], fallbackRgb[2])
+                        val fallbackRgb = audioFallbackEngine.nextAmbientRgb()
+                        bleClient.sendColor(fallbackRgb)
                         updateFpsAndMode(AmbilightMode.DRM_AUDIO_FALLBACK)
                     } else {
                         audioFallbackEngine.stop()
-                        bleClient.sendColor(analysis.r, analysis.g, analysis.b)
+                        bleClient.sendColor(analysis.color)
                         updateFpsAndMode(AmbilightMode.SCREEN_SYNC)
                     }
                 } else if (currentState.mode == AmbilightMode.DRM_AUDIO_FALLBACK && currentState.drmFallbackEnabled) {
-                    val fallbackRgb = audioFallbackEngine.nextAmbientColor()
-                    bleClient.sendColor(fallbackRgb[0], fallbackRgb[1], fallbackRgb[2])
+                    val fallbackRgb = audioFallbackEngine.nextAmbientRgb()
+                    bleClient.sendColor(fallbackRgb)
                     updateFpsAndMode(AmbilightMode.DRM_AUDIO_FALLBACK)
                 }
 
@@ -398,10 +399,29 @@ class AmbilightForegroundService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val state = AmbilightStateRepository.state.value
+        val statusText = if (state.targetMacAddress.isNotBlank()) {
+            val deviceLabel = if (state.connectedDeviceName.isNotBlank() &&
+                state.connectedDeviceName != AmbilightUiState.DEFAULT_DEVICE_NAME
+            ) {
+                "${state.connectedDeviceName} (${state.targetMacAddress})"
+            } else {
+                state.targetMacAddress
+            }
+            when (state.mode) {
+                AmbilightMode.SCREEN_SYNC -> "Sincronizando tela com $deviceLabel"
+                AmbilightMode.DRM_AUDIO_FALLBACK -> "Modo áudio/ambiente ativo com $deviceLabel"
+                AmbilightMode.TV_STANDBY -> "TV em espera: fita desligada ($deviceLabel)"
+                AmbilightMode.STOPPED -> "Ambilight pronto ($deviceLabel)"
+            }
+        } else {
+            "Aguardando conexão com fita LED (Nenhuma fita conectada)"
+        }
+
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_view)
             .setContentTitle("Lotus Ambilight TV Ativo")
-            .setContentText("Sincronizando tela com BLEDOB (BE:27:08:00:49:E2)")
+            .setContentText(statusText)
             .setContentIntent(pendingOpen)
             .setOngoing(true)
             .addAction(android.R.drawable.ic_media_pause, "Parar Ambilight", pendingStop)

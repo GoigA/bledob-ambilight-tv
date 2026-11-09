@@ -3,6 +3,8 @@ package com.lotus.ambilighttv.state
 import android.content.Context
 import com.lotus.ambilighttv.ble.BleDobProtocol
 import com.lotus.ambilighttv.engine.VividEdgeColorEngine
+import com.lotus.ambilighttv.model.BleMacAddress
+import com.lotus.ambilighttv.model.RgbColor
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -23,16 +25,22 @@ enum class AmbilightMode(val label: String) {
     TV_STANDBY("TV em Standby (Fita Desligada)")
 }
 
+/**
+ * Immutable UI and runtime state for Lotus Ambilight TV.
+ *
+ * Holds user preferences, hardware connection state, and live telemetry.
+ * Defaults represent a clean, unconfigured idle state with zero arbitrary mock telemetry.
+ */
 data class AmbilightUiState(
     val isServiceRunning: Boolean = false,
     val mode: AmbilightMode = AmbilightMode.STOPPED,
     val bleStatus: BleConnectionStatus = BleConnectionStatus.DISCONNECTED,
     val targetMacAddress: String = BleDobProtocol.DEFAULT_MAC_ADDRESS,
-    val connectedDeviceName: String = BleDobProtocol.DEFAULT_DEVICE_NAME,
-    val currentR: Int = 255,
-    val currentG: Int = 110,
-    val currentB: Int = 30,
-    val lastHexPacket: String = "7E 07 05 03 FF 6E 1E 10 EF",
+    val connectedDeviceName: String = DEFAULT_DEVICE_NAME,
+    val currentR: Int = 0,
+    val currentG: Int = 0,
+    val currentB: Int = 0,
+    val lastHexPacket: String = "",
     val profile: VividEdgeColorEngine.AmbilightProfile = VividEdgeColorEngine.AmbilightProfile.DYNAMIC,
     val channelOrder: BleDobProtocol.ChannelOrder = BleDobProtocol.ChannelOrder.RGB,
     val protocolVariant: BleDobProtocol.ProtocolVariant = BleDobProtocol.ProtocolVariant.BLEDOB_07,
@@ -40,7 +48,46 @@ data class AmbilightUiState(
     val standbySyncEnabled: Boolean = true,
     val drmFallbackEnabled: Boolean = true,
     val fps: Int = 0
-)
+) {
+    companion object {
+        /** Human-readable fallback label when no peripheral is connected. */
+        const val DEFAULT_DEVICE_NAME = "Nenhuma fita conectada"
+    }
+
+    /**
+     * Typed domain representation of the current live ambilight color.
+     * Backed by zero-allocation [RgbColor] value class.
+     */
+    val currentColor: RgbColor
+        get() = RgbColor.fromRgb(currentR, currentG, currentB)
+
+    /**
+     * Typed domain representation of the target Bluetooth MAC address.
+     * Safely wraps validation and uppercase normalization.
+     */
+    val targetMac: BleMacAddress
+        get() = BleMacAddress.fromOrDefault(targetMacAddress, BleMacAddress.UNCONFIGURED)
+
+    /**
+     * Convenience copy helper for updating live color telemetry using [RgbColor].
+     */
+    fun withColor(color: RgbColor, lastPacket: String = lastHexPacket): AmbilightUiState =
+        copy(
+            currentR = color.r,
+            currentG = color.g,
+            currentB = color.b,
+            lastHexPacket = lastPacket
+        )
+
+    /**
+     * Convenience copy helper for updating target hardware using [BleMacAddress].
+     */
+    fun withMacAddress(mac: BleMacAddress, deviceName: String = connectedDeviceName): AmbilightUiState =
+        copy(
+            targetMacAddress = mac.formatted,
+            connectedDeviceName = deviceName
+        )
+}
 
 object AmbilightStateRepository {
     private const val PREFS_NAME = "lotus_ambilight_prefs"
@@ -66,9 +113,11 @@ object AmbilightStateRepository {
         val standbySync = prefs.getBoolean(KEY_STANDBY_SYNC, true)
         val drmFallback = prefs.getBoolean(KEY_DRM_FALLBACK, true)
 
+        val normalizedMac = BleMacAddress.fromOrNull(mac)?.formatted ?: mac.trim().uppercase()
+
         _state.update {
             it.copy(
-                targetMacAddress = mac,
+                targetMacAddress = normalizedMac,
                 profile = runCatching { VividEdgeColorEngine.AmbilightProfile.valueOf(profileName!!) }
                     .getOrDefault(VividEdgeColorEngine.AmbilightProfile.DYNAMIC),
                 channelOrder = runCatching { BleDobProtocol.ChannelOrder.valueOf(orderName!!) }
@@ -93,7 +142,8 @@ object AmbilightStateRepository {
         targetMacAddress: String = _state.value.targetMacAddress
     ) {
         val clampedBrightness = brightnessPercent.coerceIn(10, 100)
-        val normalizedMac = targetMacAddress.trim().uppercase()
+        val normalizedMac = BleMacAddress.fromOrNull(targetMacAddress)?.formatted
+            ?: targetMacAddress.trim().uppercase()
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .putString(KEY_MAC, normalizedMac)
@@ -118,7 +168,45 @@ object AmbilightStateRepository {
         }
     }
 
+    fun updateSettings(
+        context: Context,
+        targetMac: BleMacAddress,
+        profile: VividEdgeColorEngine.AmbilightProfile = _state.value.profile,
+        channelOrder: BleDobProtocol.ChannelOrder = _state.value.channelOrder,
+        protocolVariant: BleDobProtocol.ProtocolVariant = _state.value.protocolVariant,
+        brightnessPercent: Int = _state.value.brightnessPercent,
+        standbySyncEnabled: Boolean = _state.value.standbySyncEnabled,
+        drmFallbackEnabled: Boolean = _state.value.drmFallbackEnabled
+    ) = updateSettings(
+        context = context,
+        profile = profile,
+        channelOrder = channelOrder,
+        protocolVariant = protocolVariant,
+        brightnessPercent = brightnessPercent,
+        standbySyncEnabled = standbySyncEnabled,
+        drmFallbackEnabled = drmFallbackEnabled,
+        targetMacAddress = targetMac.formatted
+    )
+
+    fun updateRuntimeColor(color: RgbColor, lastPacket: String = "") {
+        _state.update {
+            it.copy(
+                currentR = color.r,
+                currentG = color.g,
+                currentB = color.b,
+                lastHexPacket = lastPacket
+            )
+        }
+    }
+
     fun updateRuntimeState(transform: (AmbilightUiState) -> AmbilightUiState) {
         _state.update(transform)
+    }
+
+    /**
+     * Resets repository state to clean unconfigured defaults (primarily for testing).
+     */
+    fun resetForTesting() {
+        _state.value = AmbilightUiState()
     }
 }

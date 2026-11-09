@@ -12,3 +12,7 @@ app/build/
 .codebase-memory/
 
 .kotlin/
+
+.agents/
+
+PROJECT.md
