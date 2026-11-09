@@ -92,6 +92,8 @@ import com.lotus.ambilighttv.ui.theme.TextSecondary
 
 class MainActivity : ComponentActivity() {
 
+    private var autoMinimizeAfterProjection = false
+
     private val projectionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -102,6 +104,10 @@ class MainActivity : ComponentActivity() {
                 putExtra(AmbilightForegroundService.EXTRA_RESULT_DATA, result.data)
             }
             ContextCompat.startForegroundService(this, serviceIntent)
+            if (autoMinimizeAfterProjection) {
+                autoMinimizeAfterProjection = false
+                moveTaskToBack(true)
+            }
         }
     }
 
@@ -109,12 +115,19 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) {
         sendServiceAction(AmbilightForegroundService.ACTION_CONNECT_BLE)
+        if (autoMinimizeAfterProjection) {
+            requestScreenCapture()
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AmbilightStateRepository.loadPreferences(this)
-        ensureRuntimePermissionsAndConnect()
+        val shouldAutoStart = intent?.getBooleanExtra("auto_start", false) == true
+        if (shouldAutoStart) {
+            autoMinimizeAfterProjection = true
+        }
+        ensureRuntimePermissionsAndConnect(autoStartProjection = shouldAutoStart)
 
         setContent {
             val uiState by AmbilightStateRepository.state.collectAsState()
@@ -172,7 +185,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun ensureRuntimePermissionsAndConnect() {
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.getBooleanExtra("auto_start", false)) {
+            autoMinimizeAfterProjection = true
+            requestScreenCapture()
+        }
+    }
+
+    private fun ensureRuntimePermissionsAndConnect(autoStartProjection: Boolean = false) {
         val needed = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             if (checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
@@ -195,6 +217,9 @@ class MainActivity : ComponentActivity() {
             permissionLauncher.launch(needed.toTypedArray())
         } else {
             sendServiceAction(AmbilightForegroundService.ACTION_CONNECT_BLE)
+            if (autoStartProjection) {
+                requestScreenCapture()
+            }
         }
     }
 

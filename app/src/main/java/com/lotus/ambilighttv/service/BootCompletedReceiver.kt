@@ -4,10 +4,12 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import androidx.core.content.ContextCompat
+import com.lotus.ambilighttv.MainActivity
 import com.lotus.ambilighttv.state.AmbilightStateRepository
 
 /**
- * Automatically reconnects and turns on the BLEDOB LED strip when Android TV boots up.
+ * Automatically reconnects, turns on the BLEDOB LED strip, and resumes screen capture
+ * when Android TV boots up from a cold power cycle.
  */
 class BootCompletedReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
@@ -20,6 +22,14 @@ class BootCompletedReceiver : BroadcastReceiver() {
                 }
                 runCatching {
                     ContextCompat.startForegroundService(context, serviceIntent)
+                }
+
+                val activityIntent = Intent(context, MainActivity::class.java).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    putExtra("auto_start", true)
+                }
+                runCatching {
+                    context.startActivity(activityIntent)
                 }
             }
         }

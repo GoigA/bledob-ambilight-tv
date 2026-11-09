@@ -36,6 +36,7 @@ Write-Host "Instalando BLEDOB Ambilight TV ($ApkPath) com permissoes (-g)..." -F
 Write-Host "Aplicando configuracoes do Android TV 14 (sem pop-up de MediaProjection, sem icone no canto superior direito e sem restricao de bateria)..." -ForegroundColor Yellow
 & $AdbPath shell appops set $PackageName PROJECT_MEDIA allow
 & $AdbPath shell appops set $PackageName RECORD_AUDIO allow
+& $AdbPath shell appops set $PackageName SYSTEM_ALERT_WINDOW allow
 & $AdbPath shell cmd deviceidle whitelist +$PackageName
 & $AdbPath shell cmd device_config set_sync_disabled_for_tests persistent
 & $AdbPath shell cmd device_config put privacy media_projection_indicators_enabled false

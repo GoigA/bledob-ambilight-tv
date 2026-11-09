@@ -121,9 +121,10 @@ No Android 14, o sistema operacional exibe uma caixa de confirmação sempre que
 ```powershell
 adb connect IP_DA_SUA_TV:5555
 
-# Concede permissao permanente de captura e audio sem janelas de confirmacao
+# Concede permissao permanente de captura, audio e auto-inicializacao no boot sem janelas de confirmacao
 adb shell appops set com.lotus.ambilighttv PROJECT_MEDIA allow
 adb shell appops set com.lotus.ambilighttv RECORD_AUDIO allow
+adb shell appops set com.lotus.ambilighttv SYSTEM_ALERT_WINDOW allow
 
 # Impede que o sistema suspenda o servico em segundo plano por economia de energia
 adb shell cmd deviceidle whitelist +com.lotus.ambilighttv
