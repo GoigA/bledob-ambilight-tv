@@ -16,6 +16,12 @@ O projeto dispensa placas de captura HDMI externas (como Raspberry Pi ou sync bo
   <img src="docs/assets/ambilight-demo.gif" alt="Demonstração em tempo real com corte de letterbox e transição suave EMA" width="100%">
 </p>
 
+<p align="center">
+  <a href="https://goiga.github.io/bledob-ambilight-tv/"><strong>Abrir Simulador Interativo em HTML5 Canvas (GitHub Pages)</strong></a>
+  &nbsp;·&nbsp;
+  <a href="docs/ambilight_canvas_studio.html">Código-fonte do Simulador</a>
+</p>
+
 ---
 
 ## Arquitetura de processamento

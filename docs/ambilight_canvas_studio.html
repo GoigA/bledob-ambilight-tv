@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lotus Ambilight TV — Simulador Interativo (Canvas Engine)</title>
+  <style>
+    :root {
+      --bg: #070A10;
+      --card: #0F1420;
+      --surface: #151C2C;
+      --border: #243049;
+      --text: #F1F5F9;
+      --muted: #94A3B8;
+      --primary: #00E5FF;
+      --primary-dark: #00B8D4;
+      --accent: #FF2E93;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+    }
+    .container {
+      width: 100%;
+      max-width: 920px;
+      background-color: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+    }
+    .header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 20px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .title-block h1 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      color: var(--text);
+    }
+    .title-block p {
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    button {
+      cursor: pointer;
+      border-radius: 10px;
+      padding: 9px 14px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      transition: all 0.15s ease;
+      border: 1px solid var(--border);
+      background-color: var(--surface);
+      color: var(--text);
+    }
+    button:hover {
+      border-color: var(--primary);
+      transform: translateY(-1px);
+    }
+    button.primary {
+      background-color: var(--primary);
+      color: #041016;
+      border-color: var(--primary);
+    }
+    button.primary:hover {
+      background-color: var(--primary-dark);
+    }
+    .canvas-wrapper {
+      display: flex;
+      justify-content: center;
+      background-color: #05070B;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 18px;
+    }
+    canvas {
+      width: 100%;
+      max-width: 860px;
+      height: auto;
+      display: block;
+    }
+    .sliders {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+      padding: 14px;
+      background-color: var(--surface);
+      border-radius: 12px;
+      border: 1px solid var(--border);
+    }
+    .slider-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .slider-group label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.78rem;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .slider-group input[type="range"] {
+      width: 100%;
+      accent-color: var(--primary);
+      cursor: pointer;
+    }
+    .telemetry {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.8rem;
+    }
+    .metric {
+      background-color: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+    }
+    .metric .label {
+      display: block;
+      color: var(--muted);
+      font-size: 0.72rem;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .metric .value {
+      font-weight: 700;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 4px;
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      display: inline-block;
+    }
+    .footer {
+      margin-top: 18px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+    .footer a {
+      color: var(--primary);
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .footer a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="title-block">
+        <h1>Lotus Ambilight TV — Simulador Interativo</h1>
+        <p>Captura 64x36, corte de letterbox 21:9, ganho HSV + filtro EMA e pacote BLE GATT (0xFFF3)</p>
+      </div>
+      <div class="controls">
+        <button id="sceneBtn" class="primary">Trocar Cena (Sci-Fi / Cyberpunk / DRM Audio)</button>
+        <button id="profileBtn">Perfil: Dinâmico (25 FPS)</button>
+      </div>
+    </div>
+
+    <div class="canvas-wrapper">
+      <canvas id="tvCanvas" width="820" height="340"></canvas>
+    </div>
+
+    <div class="sliders">
+      <div class="slider-group">
+        <label>
+          <span>Ganho de Saturação (HSV Boost)</span>
+          <span id="satVal">1.45x</span>
+        </label>
+        <input id="satRange" type="range" min="1.0" max="2.2" step="0.05" value="1.45" />
+      </div>
+      <div class="slider-group">
+        <label>
+          <span>Brilho da Fita LED</span>
+          <span id="briVal">100%</span>
+        </label>
+        <input id="briRange" type="range" min="20" max="100" step="5" value="100" />
+      </div>
+    </div>
+
+    <div class="telemetry">
+      <div class="metric">
+        <span class="label">Modo de Operação</span>
+        <span id="modeLabel" class="value">SCREEN_SYNC (Letterbox Crop)</span>
+      </div>
+      <div class="metric">
+        <span class="label">Cor Extraída (EMA)</span>
+        <span class="value">
+          <span id="colorSwatch" class="swatch"></span>
+          <span id="rgbLabel">RGB(0, 229, 255)</span>
+        </span>
+      </div>
+      <div class="metric">
+        <span class="label">Pacote BLE (0xFFF3)</span>
+        <span id="hexLabel" class="value">7E 07 05 03 00 E5 FF 10 EF</span>
+      </div>
+    </div>
+
+    <div class="footer">
+      <span>Motor VividEdge Color Engine — Android TV 9 a 14+</span>
+      <a href="https://github.com/GoigA/bledob-ambilight-tv" target="_blank" rel="noopener">Ver repositório no GitHub →</a>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('tvCanvas');
+    const ctx = canvas.getContext('2d');
+    const modeLabel = document.getElementById('modeLabel');
+    const rgbLabel = document.getElementById('rgbLabel');
+    const hexLabel = document.getElementById('hexLabel');
+    const colorSwatch = document.getElementById('colorSwatch');
+    const sceneBtn = document.getElementById('sceneBtn');
+    const profileBtn = document.getElementById('profileBtn');
+    const satRange = document.getElementById('satRange');
+    const briRange = document.getElementById('briRange');
+    const satVal = document.getElementById('satVal');
+    const briVal = document.getElementById('briVal');
+
+    const scenes = [
+      { name: 'Sci-Fi Horizon (Letterbox 21:9)', type: 'scifi' },
+      { name: 'Cyberpunk Neon City (16:9)', type: 'cyber' },
+      { name: 'DRM Streaming (Audio Visualizer Fallback)', type: 'drm' }
+    ];
+    const profiles = [
+      { name: 'Dinâmico (25 FPS)', alpha: 0.14 },
+      { name: 'Cinema (20 FPS)', alpha: 0.06 },
+      { name: 'Jogo (30 FPS)', alpha: 0.35 }
+    ];
+
+    let sceneIdx = 0;
+    let profileIdx = 0;
+    let t = 0;
+    let emaR = 0, emaG = 180, emaB = 255;
+
+    sceneBtn.addEventListener('click', () => {
+      sceneIdx = (sceneIdx + 1) % scenes.length;
+    });
+    profileBtn.addEventListener('click', () => {
+      profileIdx = (profileIdx + 1) % profiles.length;
+      profileBtn.textContent = 'Perfil: ' + profiles[profileIdx].name;
+    });
+    satRange.addEventListener('input', () => {
+      satVal.textContent = parseFloat(satRange.value).toFixed(2) + 'x';
+    });
+    briRange.addEventListener('input', () => {
+      briVal.textContent = briRange.value + '%';
+    });
+
+    function toHex(n) {
+      return Math.max(0, Math.min(255, Math.round(n))).toString(16).toUpperCase().padStart(2, '0');
+    }
+
+    function boostColor(r, g, b, satBoost, brightnessScale) {
+      const avg = (r + g + b) / 3;
+      const br = Math.min(255, Math.max(0, (avg + (r - avg) * satBoost) * brightnessScale));
+      const bg = Math.min(255, Math.max(0, (avg + (g - avg) * satBoost) * brightnessScale));
+      const bb = Math.min(255, Math.max(0, (avg + (b - avg) * satBoost) * brightnessScale));
+      return [br, bg, bb];
+    }
+
+    function render() {
+      t += 0.032;
+      const scene = scenes[sceneIdx];
+      let rawR = 0, rawG = 0, rawB = 0;
+
+      if (scene.type === 'scifi') {
+        rawR = 130 + 115 * Math.sin(t * 0.8);
+        rawG = 95 + 70 * Math.cos(t * 0.6);
+        rawB = 155 + 95 * Math.cos(t * 0.9);
+        modeLabel.textContent = 'SCREEN_SYNC (Letterbox Crop)';
+      } else if (scene.type === 'cyber') {
+        rawR = 150 + 105 * Math.sin(t * 1.3);
+        rawG = 40 + 140 * Math.max(0, Math.cos(t * 1.1));
+        rawB = 210 + 45 * Math.sin(t * 0.7);
+        modeLabel.textContent = 'SCREEN_SYNC (Vivid Edge)';
+      } else {
+        const bass = 0.5 + 0.5 * Math.sin(t * 2.6);
+        rawR = 215 * (0.55 + 0.45 * bass);
+        rawG = 110 * (0.45 + 0.55 * bass);
+        rawB = 45 + 90 * Math.max(0, Math.sin(t * 1.8));
+        modeLabel.textContent = 'DRM_AUDIO_FALLBACK (Session 0)';
+      }
+
+      const satBoost = parseFloat(satRange.value);
+      const briScale = parseFloat(briRange.value) / 100.0;
+      const [targetR, targetG, targetB] = boostColor(rawR, rawG, rawB, satBoost, briScale);
+
+      const alpha = profiles[profileIdx].alpha;
+      emaR += alpha * (targetR - emaR);
+      emaG += alpha * (targetG - emaG);
+      emaB += alpha * (targetB - emaB);
+
+      const r = Math.round(emaR);
+      const g = Math.round(emaG);
+      const b = Math.round(emaB);
+
+      ctx.fillStyle = '#06080E';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const cx = canvas.width / 2;
+      const cy = canvas.height / 2;
+      const halo = ctx.createRadialGradient(cx, cy, 70, cx, cy, 370);
+      halo.addColorStop(0, `rgba(${r}, ${g}, ${b}, 0.82)`);
+      halo.addColorStop(0.55, `rgba(${r}, ${g}, ${b}, 0.30)`);
+      halo.addColorStop(1, 'rgba(6, 8, 14, 0)');
+      ctx.fillStyle = halo;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const tvW = 460, tvH = 230;
+      const tvX = (canvas.width - tvW) / 2;
+      const tvY = (canvas.height - tvH) / 2;
+
+      ctx.fillStyle = '#05070B';
+      ctx.strokeStyle = `rgb(${r}, ${g}, ${b})`;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.roundRect(tvX - 4, tvY - 4, tvW + 8, tvH + 8, 10);
+      ctx.fill();
+      ctx.stroke();
+
+      if (scene.type === 'scifi') {
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(tvX, tvY, tvW, tvH);
+        const grad = ctx.createLinearGradient(tvX, tvY + 28, tvX + tvW, tvY + tvH - 28);
+        grad.addColorStop(0, `rgb(${Math.min(255, r + 20)}, ${Math.max(20, g - 20)}, ${Math.max(30, b - 40)})`);
+        grad.addColorStop(1, `rgb(${Math.max(20, r - 50)}, ${Math.min(255, g + 30)}, ${Math.min(255, b + 30)})`);
+        ctx.fillStyle = grad;
+        ctx.fillRect(tvX, tvY + 28, tvW, tvH - 56);
+      } else if (scene.type === 'cyber') {
+        const grad = ctx.createLinearGradient(tvX, tvY, tvX + tvW, tvY + tvH);
+        grad.addColorStop(0, `rgb(${r}, 20, 160)`);
+        grad.addColorStop(0.5, `rgb(20, ${g}, ${b})`);
+        grad.addColorStop(1, `rgb(${r}, ${g}, 255)`);
+        ctx.fillStyle = grad;
+        ctx.fillRect(tvX, tvY, tvW, tvH);
+      } else {
+        ctx.fillStyle = '#07090E';
+        ctx.fillRect(tvX, tvY, tvW, tvH);
+        for (let i = 0; i < 28; i++) {
+          const barH = 20 + 85 * Math.abs(Math.sin(t * 2.4 + i * 0.45));
+          ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+          ctx.fillRect(tvX + 34 + i * 14, tvY + tvH - 40 - barH, 9, barH);
+        }
+      }
+
+      ctx.fillStyle = 'rgba(5, 8, 14, 0.78)';
+      ctx.fillRect(tvX + 12, tvY + 12, 280, 26);
+      ctx.fillStyle = '#E2E8F0';
+      ctx.font = '12px monospace';
+      ctx.fillText(scene.name, tvX + 20, tvY + 29);
+
+      colorSwatch.style.backgroundColor = `rgb(${r}, ${g}, ${b})`;
+      rgbLabel.textContent = `RGB(${r}, ${g}, ${b})`;
+      hexLabel.textContent = `7E 07 05 03 ${toHex(r)} ${toHex(g)} ${toHex(b)} 10 EF`;
+
+      requestAnimationFrame(render);
+    }
+    render();
+  </script>
+</body>
+</html>
