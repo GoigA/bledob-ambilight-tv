@@ -15,6 +15,7 @@ import android.content.Context
 import android.os.Build
 import android.os.SystemClock
 import com.lotus.ambilighttv.model.RgbColor
+import com.lotus.ambilighttv.state.AmbilightMode
 import com.lotus.ambilighttv.state.AmbilightStateRepository
 import com.lotus.ambilighttv.state.BleConnectionStatus
 import kotlinx.coroutines.CoroutineDispatcher
@@ -353,7 +354,11 @@ class BleDobGattClient(
                         connectedDeviceName = gatt.device.name ?: BleDobProtocol.DEFAULT_DEVICE_NAME
                     )
                 }
-                sendPowerOn()
+                if (isExplicitShutdown.get() || AmbilightStateRepository.state.value.mode == AmbilightMode.TV_STANDBY) {
+                    sendPowerOff()
+                } else {
+                    sendPowerOn()
+                }
             } else {
                 isConnectedAndReady = false
                 isConnectingOrConnected.set(false)
@@ -368,11 +373,11 @@ class BleDobGattClient(
     }
 
     private fun scheduleReconnect() {
-        if (isExplicitShutdown.get()) return
+        if (isExplicitShutdown.get() || AmbilightStateRepository.state.value.mode == AmbilightMode.TV_STANDBY) return
         reconnectJob?.cancel()
         reconnectJob = scope.launch {
             delay(RECONNECT_BACKOFF_MS)
-            if (!isExplicitShutdown.get()) {
+            if (!isExplicitShutdown.get() && AmbilightStateRepository.state.value.mode != AmbilightMode.TV_STANDBY) {
                 connect(AmbilightStateRepository.state.value.targetMacAddress)
             }
         }
@@ -411,6 +416,34 @@ class BleDobGattClient(
     }
 
     /**
+     * Sends the Power OFF burst and then cleanly closes the GATT connection with
+     * [isExplicitShutdown] enabled so the strip cannot auto-reconnect and power back on
+     * while the Android TV is in standby.
+     */
+    fun powerOffAndDisconnectForStandby() {
+        isExplicitShutdown.set(true)
+        reconnectJob?.cancel()
+        reconnectJob = null
+        scanJob?.cancel()
+        scanJob = null
+        connectTimeoutJob?.cancel()
+        connectTimeoutJob = null
+
+        val state = AmbilightStateRepository.state.value
+        scope.launch {
+            repeat(POWER_OFF_REPEAT_COUNT) {
+                writeRawPacket(BleDobProtocol.createPowerOffPacket(state.protocolVariant))
+                if (state.protocolVariant == BleDobProtocol.ProtocolVariant.DUAL_HYBRID) {
+                    delay(DUAL_COMMAND_POWER_OFF_DELAY_MS)
+                    writeRawPacket(BleDobProtocol.createPowerOffPacket(BleDobProtocol.ProtocolVariant.BLEDOM_04))
+                }
+                delay(POWER_OFF_BURST_DELAY_MS)
+            }
+            disconnectAndClose()
+        }
+    }
+
+    /**
      * Sends hardware brightness packet (0..100%) using pre-allocated reusable buffer.
      */
     fun sendHardwareBrightness(percent: Int) {
@@ -428,8 +461,12 @@ class BleDobGattClient(
      * @param force When true, bypasses frame-rate throttle and delta checks.
      */
     fun sendColor(color: RgbColor, force: Boolean = false) {
-        val now = SystemClock.elapsedRealtime()
         val state = AmbilightStateRepository.state.value
+        if (!force && (isExplicitShutdown.get() || state.mode == AmbilightMode.TV_STANDBY)) {
+            return
+        }
+
+        val now = SystemClock.elapsedRealtime()
         val minIntervalMs = (1000L / state.profile.targetFps.coerceIn(MIN_TARGET_FPS, MAX_TARGET_FPS))
 
         if (!force && (now - lastWriteTimestampMs) < minIntervalMs) {

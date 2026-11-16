@@ -22,6 +22,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
+import android.os.Process
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import com.lotus.ambilighttv.MainActivity
@@ -59,14 +60,18 @@ class AmbilightForegroundService : Service() {
 
         private const val NOTIFICATION_CHANNEL_ID = "lotus_ambilight_channel"
         private const val NOTIFICATION_ID = 1001
-        private const val CAPTURE_WIDTH = 64
-        private const val CAPTURE_HEIGHT = 36
+        private const val CAPTURE_WIDTH = 32
+        private const val CAPTURE_HEIGHT = 18
+        private const val MAX_TV_SAFE_CAPTURE_FPS = 15
+        private const val IMAGE_READER_MAX_IMAGES = 3
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private lateinit var bleClient: BleDobGattClient
     private val colorEngine = VividEdgeColorEngine()
-    private val audioFallbackEngine = AudioFallbackEngine()
+    private val audioFallbackEngine = AudioFallbackEngine(
+        com.lotus.ambilighttv.engine.AudioEngineConfig(enableHardwareVisualizer = false)
+    )
 
     private var mediaProjection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
@@ -76,6 +81,7 @@ class AmbilightForegroundService : Service() {
     private var captureLoopJob: Job? = null
 
     private val frameBuffer = IntArray(CAPTURE_WIDTH * CAPTURE_HEIGHT)
+    private var rawPlaneBytes = ByteArray(CAPTURE_WIDTH * CAPTURE_HEIGHT * 4)
     private var isTvScreenOff = false
     private var frameCounter = 0
     private var lastFpsTimestampMs = 0L
@@ -88,21 +94,27 @@ class AmbilightForegroundService : Service() {
             when (intent?.action) {
                 Intent.ACTION_SCREEN_OFF -> {
                     isTvScreenOff = true
+                    runCatching { virtualDisplay?.surface = null }
                     AmbilightStateRepository.updateRuntimeState {
                         it.copy(mode = AmbilightMode.TV_STANDBY, fps = 0)
                     }
                     audioFallbackEngine.stop()
-                    bleClient.sendPowerOff()
+                    bleClient.powerOffAndDisconnectForStandby()
                 }
                 Intent.ACTION_SCREEN_ON -> {
                     isTvScreenOff = false
-                    bleClient.connect()
-                    bleClient.sendPowerOn()
+                    runCatching { virtualDisplay?.surface = imageReader?.surface }
                     if (mediaProjection != null) {
                         AmbilightStateRepository.updateRuntimeState {
                             it.copy(mode = AmbilightMode.SCREEN_SYNC)
                         }
+                    } else {
+                        AmbilightStateRepository.updateRuntimeState {
+                            it.copy(mode = AmbilightMode.STOPPED)
+                        }
                     }
+                    bleClient.connect()
+                    bleClient.sendPowerOn()
                 }
             }
         }
@@ -213,7 +225,7 @@ class AmbilightForegroundService : Service() {
             }
         }, null)
 
-        val thread = HandlerThread("LotusAmbilightCapture").apply { start() }
+        val thread = HandlerThread("LotusAmbilightCapture", Process.THREAD_PRIORITY_BACKGROUND).apply { start() }
         captureThread = thread
         val handler = Handler(thread.looper)
         captureHandler = handler
@@ -222,7 +234,7 @@ class AmbilightForegroundService : Service() {
             CAPTURE_WIDTH,
             CAPTURE_HEIGHT,
             PixelFormat.RGBA_8888,
-            2
+            IMAGE_READER_MAX_IMAGES
         )
         imageReader = reader
 
@@ -249,7 +261,8 @@ class AmbilightForegroundService : Service() {
             while (isActive) {
                 val currentState = AmbilightStateRepository.state.value
                 colorEngine.profile = currentState.profile
-                val frameDelayMs = (1000L / currentState.profile.targetFps.coerceIn(10, 30))
+                val effectiveFps = currentState.profile.targetFps.coerceIn(10, MAX_TV_SAFE_CAPTURE_FPS)
+                val frameDelayMs = 1000L / effectiveFps
 
                 if (isTvScreenOff) {
                     delay(500L)
@@ -263,27 +276,24 @@ class AmbilightForegroundService : Service() {
                 }
 
                 if (image != null) {
-                    try {
-                        extractPixelsFromImage(image, frameBuffer)
-                    } finally {
-                        image.close()
-                    }
+                    val extracted = extractPixelsAndCloseImage(image, frameBuffer)
+                    if (extracted) {
+                        val analysis = colorEngine.processFrame(
+                            argbPixels = frameBuffer,
+                            width = CAPTURE_WIDTH,
+                            height = CAPTURE_HEIGHT
+                        )
 
-                    val analysis = colorEngine.processFrame(
-                        argbPixels = frameBuffer,
-                        width = CAPTURE_WIDTH,
-                        height = CAPTURE_HEIGHT
-                    )
-
-                    if (analysis.isDrmFallbackActive && currentState.drmFallbackEnabled) {
-                        audioFallbackEngine.start()
-                        val fallbackRgb = audioFallbackEngine.nextAmbientRgb()
-                        bleClient.sendColor(fallbackRgb)
-                        updateFpsAndMode(AmbilightMode.DRM_AUDIO_FALLBACK)
-                    } else {
-                        audioFallbackEngine.stop()
-                        bleClient.sendColor(analysis.color)
-                        updateFpsAndMode(AmbilightMode.SCREEN_SYNC)
+                        if (analysis.isDrmFallbackActive && currentState.drmFallbackEnabled) {
+                            audioFallbackEngine.start()
+                            val fallbackRgb = audioFallbackEngine.nextAmbientRgb()
+                            bleClient.sendColor(fallbackRgb)
+                            updateFpsAndMode(AmbilightMode.DRM_AUDIO_FALLBACK)
+                        } else {
+                            audioFallbackEngine.stop()
+                            bleClient.sendColor(analysis.color)
+                            updateFpsAndMode(AmbilightMode.SCREEN_SYNC)
+                        }
                     }
                 } else if (currentState.mode == AmbilightMode.DRM_AUDIO_FALLBACK && currentState.drmFallbackEnabled) {
                     val fallbackRgb = audioFallbackEngine.nextAmbientRgb()
@@ -314,25 +324,45 @@ class AmbilightForegroundService : Service() {
         }
     }
 
-    private fun extractPixelsFromImage(image: Image, outArgb: IntArray) {
-        val plane = image.planes.firstOrNull() ?: return
-        val buffer = plane.buffer
-        val pixelStride = plane.pixelStride
-        val rowStride = plane.rowStride
-        val width = image.width.coerceAtMost(CAPTURE_WIDTH)
-        val height = image.height.coerceAtMost(CAPTURE_HEIGHT)
+    private fun extractPixelsAndCloseImage(image: Image, outArgb: IntArray): Boolean {
+        val width: Int
+        val height: Int
+        val pixelStride: Int
+        val rowStride: Int
+        try {
+            val plane = image.planes.firstOrNull() ?: return false
+            val buffer = plane.buffer
+            pixelStride = plane.pixelStride
+            rowStride = plane.rowStride
+            width = image.width.coerceAtMost(CAPTURE_WIDTH)
+            height = image.height.coerceAtMost(CAPTURE_HEIGHT)
+            val requiredBytes = buffer.remaining()
+            if (requiredBytes <= 0) return false
+            if (rawPlaneBytes.size < requiredBytes) {
+                rawPlaneBytes = ByteArray(requiredBytes)
+            }
+            buffer.get(rawPlaneBytes, 0, requiredBytes)
+        } finally {
+            runCatching { image.close() }
+        }
 
         var outIndex = 0
+        val maxLen = rawPlaneBytes.size
         for (y in 0 until height) {
             val rowStart = y * rowStride
             for (x in 0 until width) {
                 val offset = rowStart + x * pixelStride
-                val r = buffer.get(offset).toInt() and 0xFF
-                val g = buffer.get(offset + 1).toInt() and 0xFF
-                val b = buffer.get(offset + 2).toInt() and 0xFF
-                outArgb[outIndex++] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+                if (offset + 2 < maxLen) {
+                    val r = rawPlaneBytes[offset].toInt() and 0xFF
+                    val g = rawPlaneBytes[offset + 1].toInt() and 0xFF
+                    val b = rawPlaneBytes[offset + 2].toInt() and 0xFF
+                    outArgb[outIndex++] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+                } else {
+                    outArgb[outIndex++] = 0xFF000000.toInt()
+                }
             }
         }
+        return true
     }
 
     private fun stopCaptureResourcesOnly() {

@@ -429,6 +429,24 @@ class AudioFallbackEngineTest {
         assertEquals(AudioFallbackEngine.DEFAULT_AUDIO_ENERGY_THRESHOLD, config.audioEnergyThreshold, 0.001f)
     }
 
+    @Test
+    fun `disabled hardware visualizer transitions straight to RUNNING_WARM_LOUNGE without invoking provider`() {
+        var providerInvocations = 0
+        val engine = AudioFallbackEngine(
+            config = AudioEngineConfig(enableHardwareVisualizer = false),
+            visualizerProvider = {
+                providerInvocations++
+                throw AssertionError("visualizerProvider should never be called when enableHardwareVisualizer is false")
+            }
+        )
+
+        engine.start()
+
+        assertEquals(0, providerInvocations)
+        assertEquals(AudioEngineStatus.RUNNING_WARM_LOUNGE, engine.status)
+        assertFalse(engine.isVisualizerBlocked)
+    }
+
     // Helper to set real byte in FFT array
     private fun fftValue(array: ByteArray, index: Int, value: Int) {
         array[index] = value.coerceIn(-128, 127).toByte()

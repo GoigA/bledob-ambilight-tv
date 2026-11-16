@@ -3,6 +3,7 @@ package com.lotus.ambilighttv.ble
 import android.content.Context
 import android.content.ContextWrapper
 import com.lotus.ambilighttv.model.RgbColor
+import com.lotus.ambilighttv.state.AmbilightMode
 import com.lotus.ambilighttv.state.AmbilightStateRepository
 import com.lotus.ambilighttv.state.BleConnectionStatus
 import kotlinx.coroutines.Dispatchers
@@ -135,5 +136,35 @@ class BleDobGattClientTest {
         client.sendHardwareBrightness(80)
         client.sendPowerOn()
         client.sendPowerOff()
+    }
+
+    @Test
+    fun `powerOffAndDisconnectForStandby sets isExplicitShutdown immediately and disconnects after burst`() {
+        AmbilightStateRepository.updateRuntimeState {
+            it.copy(bleStatus = BleConnectionStatus.CONNECTED, mode = AmbilightMode.TV_STANDBY)
+        }
+
+        client.powerOffAndDisconnectForStandby()
+
+        assertTrue("powerOffAndDisconnectForStandby must set isExplicitShutdown immediately", client.isExplicitShutdown.get())
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(BleConnectionStatus.DISCONNECTED, AmbilightStateRepository.state.value.bleStatus)
+        assertFalse(client.isConnectingOrConnected.get())
+        assertFalse(client.isConnectedAndReady)
+    }
+
+    @Test
+    fun `sendColor without force is ignored during TV_STANDBY mode`() {
+        AmbilightStateRepository.updateRuntimeState {
+            it.copy(mode = AmbilightMode.TV_STANDBY, currentR = 10, currentG = 20, currentB = 30)
+        }
+
+        client.sendColor(RgbColor.fromRgb(255, 0, 128), force = false)
+
+        val state = AmbilightStateRepository.state.value
+        assertEquals(10, state.currentR)
+        assertEquals(20, state.currentG)
+        assertEquals(30, state.currentB)
     }
 }

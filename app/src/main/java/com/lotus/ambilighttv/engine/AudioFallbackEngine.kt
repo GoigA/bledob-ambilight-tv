@@ -85,7 +85,10 @@ data class AudioEngineConfig(
     val breathPhaseFreq: Double = AudioFallbackEngine.DEFAULT_BREATH_PHASE_FREQ,
     val loungeRedBase: Int = AudioFallbackEngine.DEFAULT_LOUNGE_RED_BASE,
     val loungeGreenBase: Int = AudioFallbackEngine.DEFAULT_LOUNGE_GREEN_BASE,
-    val loungeBlueBase: Int = AudioFallbackEngine.DEFAULT_LOUNGE_BLUE_BASE
+    val loungeBlueBase: Int = AudioFallbackEngine.DEFAULT_LOUNGE_BLUE_BASE,
+
+    // Hardware Visualizer Toggle (disable on Android TV SoCs where Visualizer(0) disrupts tunneled 4K video)
+    val enableHardwareVisualizer: Boolean = true
 )
 
 /**
@@ -155,6 +158,11 @@ class AudioFallbackEngine(
             status == AudioEngineStatus.RUNNING_WARM_LOUNGE ||
             status == AudioEngineStatus.FAILED_PERMANENTLY
         ) {
+            return
+        }
+
+        if (!config.enableHardwareVisualizer) {
+            status = AudioEngineStatus.RUNNING_WARM_LOUNGE
             return
         }
 
