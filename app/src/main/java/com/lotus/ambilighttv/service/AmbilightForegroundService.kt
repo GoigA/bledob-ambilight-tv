@@ -6,6 +6,8 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.app.usage.UsageEvents
+import android.app.usage.UsageStatsManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -14,6 +16,9 @@ import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
+import android.media.AudioAttributes
+import android.media.AudioManager
+import android.media.AudioPlaybackConfiguration
 import android.media.Image
 import android.media.ImageReader
 import android.media.projection.MediaProjection
@@ -28,6 +33,7 @@ import androidx.core.app.NotificationCompat
 import com.lotus.ambilighttv.MainActivity
 import com.lotus.ambilighttv.ble.BleDobGattClient
 import com.lotus.ambilighttv.engine.AudioFallbackEngine
+import com.lotus.ambilighttv.engine.HardwareVideoBypassPolicy
 import com.lotus.ambilighttv.engine.VividEdgeColorEngine
 import com.lotus.ambilighttv.state.AmbilightMode
 import com.lotus.ambilighttv.state.AmbilightStateRepository
@@ -64,11 +70,15 @@ class AmbilightForegroundService : Service() {
         private const val CAPTURE_HEIGHT = 18
         private const val MAX_TV_SAFE_CAPTURE_FPS = 15
         private const val IMAGE_READER_MAX_IMAGES = 3
+        private const val USAGE_STATS_QUERY_INTERVAL_MS = 500L
+        private const val USAGE_STATS_INITIAL_LOOKBACK_MS = 3_600_000L
+        private const val USAGE_STATS_OVERLAP_MS = 1_000L
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private lateinit var bleClient: BleDobGattClient
     private val colorEngine = VividEdgeColorEngine()
+    private val hardwareVideoBypassPolicy = HardwareVideoBypassPolicy()
     private val audioFallbackEngine = AudioFallbackEngine(
         com.lotus.ambilighttv.engine.AudioEngineConfig(enableHardwareVisualizer = false)
     )
@@ -79,10 +89,19 @@ class AmbilightForegroundService : Service() {
     private var captureThread: HandlerThread? = null
     private var captureHandler: Handler? = null
     private var captureLoopJob: Job? = null
+    private var audioPlaybackCallback: AudioManager.AudioPlaybackCallback? = null
 
+    private val surfaceLock = Any()
     private val frameBuffer = IntArray(CAPTURE_WIDTH * CAPTURE_HEIGHT)
     private var rawPlaneBytes = ByteArray(CAPTURE_WIDTH * CAPTURE_HEIGHT * 4)
+    @Volatile
     private var isTvScreenOff = false
+    @Volatile
+    private var isVirtualSurfaceAttached = false
+    @Volatile
+    private var cachedForegroundPackage: String? = null
+    private var lastUsageStatsQueryElapsedMs = 0L
+    private var lastUsageStatsWallClockMs = 0L
     private var frameCounter = 0
     private var lastFpsTimestampMs = 0L
 
@@ -94,7 +113,7 @@ class AmbilightForegroundService : Service() {
             when (intent?.action) {
                 Intent.ACTION_SCREEN_OFF -> {
                     isTvScreenOff = true
-                    runCatching { virtualDisplay?.surface = null }
+                    detachVirtualDisplaySurface()
                     AmbilightStateRepository.updateRuntimeState {
                         it.copy(mode = AmbilightMode.TV_STANDBY, fps = 0)
                     }
@@ -103,10 +122,17 @@ class AmbilightForegroundService : Service() {
                 }
                 Intent.ACTION_SCREEN_ON -> {
                     isTvScreenOff = false
-                    runCatching { virtualDisplay?.surface = imageReader?.surface }
+                    if (!shouldBypassVirtualDisplay()) {
+                        attachVirtualDisplaySurface()
+                    }
                     if (mediaProjection != null) {
+                        val activeMode = if (isVirtualSurfaceAttached) {
+                            AmbilightMode.SCREEN_SYNC
+                        } else {
+                            AmbilightMode.DRM_AUDIO_FALLBACK
+                        }
                         AmbilightStateRepository.updateRuntimeState {
-                            it.copy(mode = AmbilightMode.SCREEN_SYNC)
+                            it.copy(mode = activeMode)
                         }
                     } else {
                         AmbilightStateRepository.updateRuntimeState {
@@ -238,20 +264,37 @@ class AmbilightForegroundService : Service() {
         )
         imageReader = reader
 
+        hardwareVideoBypassPolicy.reset()
+        lastUsageStatsQueryElapsedMs = 0L
+        lastUsageStatsWallClockMs = 0L
+        cachedForegroundPackage = null
+
+        val startInBypass = shouldBypassVirtualDisplay()
         virtualDisplay = projection.createVirtualDisplay(
             "LotusAmbilightVirtualDisplay",
             CAPTURE_WIDTH,
             CAPTURE_HEIGHT,
             resources.displayMetrics.densityDpi,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            reader.surface,
+            if (startInBypass) null else reader.surface,
             null,
             handler
         )
+        synchronized(surfaceLock) {
+            isVirtualSurfaceAttached = !startInBypass
+        }
+
+        registerAudioPlaybackWatcher(handler)
 
         colorEngine.reset()
+        if (startInBypass) {
+            audioFallbackEngine.start()
+        }
         AmbilightStateRepository.updateRuntimeState {
-            it.copy(isServiceRunning = true, mode = AmbilightMode.SCREEN_SYNC)
+            it.copy(
+                isServiceRunning = true,
+                mode = if (startInBypass) AmbilightMode.DRM_AUDIO_FALLBACK else AmbilightMode.SCREEN_SYNC
+            )
         }
 
         captureLoopJob = serviceScope.launch {
@@ -265,9 +308,22 @@ class AmbilightForegroundService : Service() {
                 val frameDelayMs = 1000L / effectiveFps
 
                 if (isTvScreenOff) {
+                    detachVirtualDisplaySurface()
                     delay(500L)
                     continue
                 }
+
+                if (shouldBypassVirtualDisplay()) {
+                    detachVirtualDisplaySurface()
+                    audioFallbackEngine.start()
+                    val fallbackRgb = audioFallbackEngine.nextAmbientRgb()
+                    bleClient.sendColor(fallbackRgb)
+                    updateFpsAndMode(AmbilightMode.DRM_AUDIO_FALLBACK)
+                    delay(frameDelayMs)
+                    continue
+                }
+
+                attachVirtualDisplaySurface()
 
                 val image = try {
                     reader.acquireLatestImage()
@@ -304,6 +360,122 @@ class AmbilightForegroundService : Service() {
                 delay(frameDelayMs)
             }
         }
+    }
+
+    private fun registerAudioPlaybackWatcher(handler: Handler) {
+        val audioManager = getSystemService(AudioManager::class.java) ?: return
+        val callback = object : AudioManager.AudioPlaybackCallback() {
+            override fun onPlaybackConfigChanged(configs: MutableList<AudioPlaybackConfiguration>?) {
+                val hasActiveMedia = configs?.any { isMediaPlaybackConfig(it) } == true
+                if (hasActiveMedia) {
+                    hardwareVideoBypassPolicy.evaluateBypass(
+                        hasActiveMediaPlayback = true,
+                        foregroundPackage = cachedForegroundPackage,
+                        nowElapsedRealtimeMs = SystemClock.elapsedRealtime()
+                    )
+                    detachVirtualDisplaySurface()
+                }
+            }
+        }
+        audioPlaybackCallback = callback
+        runCatching { audioManager.registerAudioPlaybackCallback(callback, handler) }
+    }
+
+    private fun unregisterAudioPlaybackWatcher() {
+        val callback = audioPlaybackCallback ?: return
+        audioPlaybackCallback = null
+        val audioManager = getSystemService(AudioManager::class.java) ?: return
+        runCatching { audioManager.unregisterAudioPlaybackCallback(callback) }
+    }
+
+    private fun attachVirtualDisplaySurface() {
+        val surface = imageReader?.surface ?: return
+        synchronized(surfaceLock) {
+            if (!isVirtualSurfaceAttached && !isTvScreenOff) {
+                runCatching {
+                    virtualDisplay?.surface = surface
+                    isVirtualSurfaceAttached = true
+                }
+            }
+        }
+    }
+
+    private fun detachVirtualDisplaySurface() {
+        synchronized(surfaceLock) {
+            if (isVirtualSurfaceAttached) {
+                runCatching { virtualDisplay?.surface = null }
+                isVirtualSurfaceAttached = false
+            }
+        }
+        runCatching {
+            while (true) {
+                val pending = imageReader?.acquireLatestImage() ?: break
+                pending.close()
+            }
+        }
+    }
+
+    private fun isMediaPlaybackConfig(config: AudioPlaybackConfiguration): Boolean {
+        val attr = config.audioAttributes ?: return false
+        val isMediaUsage = attr.usage == AudioAttributes.USAGE_MEDIA ||
+            attr.usage == AudioAttributes.USAGE_GAME ||
+            attr.usage == AudioAttributes.USAGE_UNKNOWN
+        val isSonification = attr.contentType == AudioAttributes.CONTENT_TYPE_SONIFICATION
+        return isMediaUsage && !isSonification
+    }
+
+    private fun isActiveMediaPlaybackDetected(): Boolean {
+        val audioManager = getSystemService(AudioManager::class.java) ?: return false
+        val configs = runCatching { audioManager.activePlaybackConfigurations }.getOrDefault(emptyList())
+        val hasActiveMediaConfig = configs.any { isMediaPlaybackConfig(it) }
+        return hasActiveMediaConfig || runCatching { audioManager.isMusicActive }.getOrDefault(false)
+    }
+
+    private fun resolveForegroundPackage(nowElapsedMs: Long): String? {
+        if (lastUsageStatsQueryElapsedMs != 0L &&
+            (nowElapsedMs - lastUsageStatsQueryElapsedMs) < USAGE_STATS_QUERY_INTERVAL_MS
+        ) {
+            return cachedForegroundPackage
+        }
+        lastUsageStatsQueryElapsedMs = nowElapsedMs
+
+        val usageStatsManager = getSystemService(UsageStatsManager::class.java) ?: return cachedForegroundPackage
+        val nowWallMs = System.currentTimeMillis()
+        val beginWallMs = if (lastUsageStatsWallClockMs == 0L) {
+            nowWallMs - USAGE_STATS_INITIAL_LOOKBACK_MS
+        } else {
+            (lastUsageStatsWallClockMs - USAGE_STATS_OVERLAP_MS).coerceAtLeast(0L)
+        }
+        lastUsageStatsWallClockMs = nowWallMs
+
+        val resumedEventType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            UsageEvents.Event.ACTIVITY_RESUMED
+        } else {
+            @Suppress("DEPRECATION")
+            UsageEvents.Event.MOVE_TO_FOREGROUND
+        }
+
+        runCatching {
+            val events = usageStatsManager.queryEvents(beginWallMs, nowWallMs)
+            val event = UsageEvents.Event()
+            while (events != null && events.hasNextEvent()) {
+                events.getNextEvent(event)
+                if (event.eventType == resumedEventType && !event.packageName.isNullOrBlank()) {
+                    cachedForegroundPackage = event.packageName
+                }
+            }
+        }
+        return cachedForegroundPackage
+    }
+
+    private fun shouldBypassVirtualDisplay(nowElapsedMs: Long = SystemClock.elapsedRealtime()): Boolean {
+        val hasMediaPlayback = isActiveMediaPlaybackDetected()
+        val foregroundPackage = resolveForegroundPackage(nowElapsedMs)
+        return hardwareVideoBypassPolicy.evaluateBypass(
+            hasActiveMediaPlayback = hasMediaPlayback,
+            foregroundPackage = foregroundPackage,
+            nowElapsedRealtimeMs = nowElapsedMs
+        )
     }
 
     private fun updateFpsAndMode(activeMode: AmbilightMode) {
@@ -366,9 +538,15 @@ class AmbilightForegroundService : Service() {
     }
 
     private fun stopCaptureResourcesOnly() {
+        unregisterAudioPlaybackWatcher()
         captureLoopJob?.cancel()
         captureLoopJob = null
         audioFallbackEngine.stop()
+        hardwareVideoBypassPolicy.reset()
+
+        synchronized(surfaceLock) {
+            isVirtualSurfaceAttached = false
+        }
 
         runCatching { virtualDisplay?.release() }
         virtualDisplay = null
